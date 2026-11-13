@@ -131,6 +131,47 @@ try:
 except Exception as error:
     print("fiats FAILED:", error)
 
+# 2c) Top cryptocurrencies to toman (arzdigital coins API, rank order,
+# BTC first). Rendered by the app's crypto section straight from the
+# snapshot, so future coin-list changes are data-only and go live
+# without an app update.
+COIN_ROWS = 10
+try:
+    raw = fetch("https://lake.arzdigital.com/web/api/v1/pub/coins?limit=12").get("data") or []
+    coins = []
+    for item in raw:
+        try:
+            symbol = str(item.get("symbol") or "").strip().upper()
+            toman = float(item.get("toman"))
+            usd = float(item.get("usd"))
+            if not symbol or not toman > 0 or usd < 0:
+                continue
+            change = item.get("price_change_percent_irt_24h")
+            try:
+                rank = int(item.get("rank"))
+            except Exception:
+                rank = 999999
+            coins.append({
+                "s": symbol,
+                "n": str(item.get("fa_name") or item.get("name") or symbol).strip(),
+                "t": round(toman, 2),
+                "u": round(usd, 6),
+                "c": round(float(change), 2) if isinstance(change, (int, float)) else None,
+                "r": rank,
+            })
+        except Exception:
+            continue
+    coins.sort(key=lambda row: row.get("r") or 999999)
+    if coins:
+        out["coins"] = coins[:COIN_ROWS]
+        out["coinsUpdatedAt"] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        ok = True
+        print("coins OK:", ", ".join(f"{c['s']}@{c['r']}" for c in coins[:COIN_ROWS]))
+    else:
+        print("coins SKIPPED: no usable rows")
+except Exception as error:
+    print("coins FAILED:", error)
+
 # 3) Weekly economic calendar (ForexFactory this-week JSON, filtered like the app).
 try:
     events = fetch("https://nfs.faireconomy.media/ff_calendar_thisweek.json")
@@ -146,7 +187,7 @@ if not out["quotes"]:
     sys.exit(1)
 
 out["updatedAt"] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-out["sources"] = {"quotes": quotes_source, "rates": "open.er-api.com", "events": "nfs.faireconomy.media", "fiats": "lake.arzdigital.com"}
+out["sources"] = {"quotes": quotes_source, "rates": "open.er-api.com", "events": "nfs.faireconomy.media", "fiats": "lake.arzdigital.com", "coins": "lake.arzdigital.com"}
 os.makedirs(os.path.dirname(DATA), exist_ok=True)
 with open(DATA, "w", encoding="utf-8") as f:
     json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
