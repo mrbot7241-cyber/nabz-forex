@@ -98,6 +98,39 @@ try:
 except Exception as error:
     print("rates FAILED:", error)
 
+# 2b) Foreign-currency rates to toman (91 fiats) from the arzdigital market
+# API — the same numbers arzdigital.com/currencies shows. Compact rows keep
+# the snapshot small; the app reads live first and this snapshot as fallback.
+try:
+    raw = fetch("https://lake.arzdigital.com/web/api/v1/pub/fiats?limit=100").get("data") or []
+    fiats = []
+    for item in raw:
+        try:
+            symbol = str(item.get("symbol") or "").strip().upper()
+            toman = float(item.get("toman"))
+            usd = float(item.get("usd"))
+            if not symbol or not toman > 0 or usd < 0:
+                continue
+            change = item.get("price_change_percent_irt_24h")
+            fiats.append({
+                "s": symbol,
+                "n": str(item.get("fa_name") or item.get("name") or symbol).strip(),
+                "t": round(toman, 2),
+                "u": round(usd, 6),
+                "c": round(float(change), 2) if isinstance(change, (int, float)) else None,
+            })
+        except Exception:
+            continue
+    if len(fiats) >= 50:
+        out["fiats"] = fiats
+        out["fiatsUpdatedAt"] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        ok = True
+        print("fiats OK:", len(fiats), "currencies")
+    else:
+        print("fiats SKIPPED: too few rows", len(fiats))
+except Exception as error:
+    print("fiats FAILED:", error)
+
 # 3) Weekly economic calendar (ForexFactory this-week JSON, filtered like the app).
 try:
     events = fetch("https://nfs.faireconomy.media/ff_calendar_thisweek.json")
@@ -113,7 +146,7 @@ if not out["quotes"]:
     sys.exit(1)
 
 out["updatedAt"] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-out["sources"] = {"quotes": quotes_source, "rates": "open.er-api.com", "events": "nfs.faireconomy.media"}
+out["sources"] = {"quotes": quotes_source, "rates": "open.er-api.com", "events": "nfs.faireconomy.media", "fiats": "lake.arzdigital.com"}
 os.makedirs(os.path.dirname(DATA), exist_ok=True)
 with open(DATA, "w", encoding="utf-8") as f:
     json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
