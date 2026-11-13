@@ -7,11 +7,14 @@ never goes blank. Exits non-zero only when no quotes could be produced at
 all, which prevents a broken file from being committed.
 """
 import datetime
+import email.utils
 import json
 import os
 import re
 import sys
 import urllib.request
+import xml.etree.ElementTree
+from html import unescape
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(ROOT, "data", "prices.json")
@@ -131,14 +134,14 @@ try:
 except Exception as error:
     print("fiats FAILED:", error)
 
-# 2c) ALL cryptocurrencies to toman (arzdigital coins API, rank order,
-# BTC first — the public endpoint serves exactly 1000 coins; limit>1000
-# is rejected with HTTP 400). Rendered by the app's crypto section straight
+# 2c) Top-100 cryptocurrencies to toman (arzdigital coins API, rank order,
+# BTC first — the 100 main coins; the full endpoint serves 1000 but only
+# the top 100 are kept). Rendered by the app's crypto section straight
 # from the snapshot, so future coin-list changes are data-only and go
 # live without an app update.
-COIN_ROWS = 1000
+COIN_ROWS = 100
 try:
-    raw = fetch("https://lake.arzdigital.com/web/api/v1/pub/coins?limit=1000").get("data") or []
+    raw = fetch("https://lake.arzdigital.com/web/api/v1/pub/coins?limit=100").get("data") or []
     coins = []
     for item in raw:
         try:
@@ -174,6 +177,54 @@ try:
 except Exception as error:
     print("coins FAILED:", error)
 
+# 2d) Trading news headlines (RSS: ForexLive, Investing.com forex, CNBC forex).
+# Rows are compact: t=title, l=link, s=source, d=published (epoch seconds).
+# The app renders this list straight from the snapshot, so the section stays
+# live without app updates.
+NEWS_ROWS = 30
+NEWS_FEEDS = [
+    ("ForexLive", "https://www.forexlive.com/feed/news"),
+    ("Investing.com", "https://www.investing.com/rss/news_1.rss"),
+    ("CNBC", "https://www.cnbc.com/id/20910258/device/rss/rss.html"),
+]
+try:
+    seen, items = set(), []
+    for source, feed_url in NEWS_FEEDS:
+        try:
+            req = urllib.request.Request(feed_url, headers=UA)
+            with urllib.request.urlopen(req, timeout=40) as resp:
+                feed = xml.etree.ElementTree.fromstring(resp.read())
+            for node in feed.findall(".//item"):
+                title = unescape((node.findtext("title") or "").strip())
+                link = unescape((node.findtext("link") or "").strip())
+                pub = (node.findtext("pubDate") or "").strip()
+                if not title or not link or title.lower() in seen:
+                    continue
+                stamp = None
+                try:
+                    stamp = email.utils.parsedate_to_datetime(pub)
+                except Exception:
+                    try:
+                        stamp = datetime.datetime.strptime(pub, "%Y-%m-%d %H:%M:%S").replace(tzinfo=datetime.timezone.utc)
+                    except Exception:
+                        stamp = None
+                if stamp is None:
+                    continue
+                seen.add(title.lower())
+                items.append({"t": title, "l": link, "s": source, "d": int(stamp.timestamp())})
+        except Exception as error:
+            print(f"news feed {source} FAILED:", error)
+    items.sort(key=lambda i: i["d"], reverse=True)
+    if items:
+        out["news"] = items[:NEWS_ROWS]
+        out["newsUpdatedAt"] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        ok = True
+        print("news OK:", len(items), "headlines — latest:", items[0]["s"], "|", items[0]["t"][:60])
+    else:
+        print("news SKIPPED: no usable headlines")
+except Exception as error:
+    print("news FAILED:", error)
+
 # 3) Weekly economic calendar (ForexFactory this-week JSON, filtered like the app).
 try:
     events = fetch("https://nfs.faireconomy.media/ff_calendar_thisweek.json")
@@ -189,7 +240,7 @@ if not out["quotes"]:
     sys.exit(1)
 
 out["updatedAt"] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-out["sources"] = {"quotes": quotes_source, "rates": "open.er-api.com", "events": "nfs.faireconomy.media", "fiats": "lake.arzdigital.com", "coins": "lake.arzdigital.com"}
+out["sources"] = {"quotes": quotes_source, "rates": "open.er-api.com", "events": "nfs.faireconomy.media", "fiats": "lake.arzdigital.com", "coins": "lake.arzdigital.com", "news": "forexlive.com · investing.com · cnbc.com"}
 os.makedirs(os.path.dirname(DATA), exist_ok=True)
 with open(DATA, "w", encoding="utf-8") as f:
     json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
