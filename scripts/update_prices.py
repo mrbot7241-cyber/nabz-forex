@@ -225,6 +225,59 @@ try:
 except Exception as error:
     print("news FAILED:", error)
 
+# 2e) Forex/commodity/index futures quotes (Yahoo Finance chart API, free &
+# key-less). Compact rows: s=contract symbol, n=Persian name, p=price,
+# c=change % vs previous close. The app renders them straight from the
+# snapshot, so contract-list changes stay data-only.
+FUTURES_ROWS = [
+    ("GC=F", "طلا فیوچر (اونس)"),
+    ("SI=F", "نقره فیوچر"),
+    ("HG=F", "مس فیوچر"),
+    ("PL=F", "پلاتین فیوچر"),
+    ("CL=F", "نفت وایت فیوچر"),
+    ("BZ=F", "نفت برنت فیوچر"),
+    ("NG=F", "گاز طبیعی فیوچر"),
+    ("6E=F", "یورو/دلار فیوچر"),
+    ("6B=F", "پوند/دلار فیوچر"),
+    ("6J=F", "ین/دلار فیوچر"),
+    ("6A=F", "دلار استرالیا فیوچر"),
+    ("6C=F", "دلار کانادا فیوچر"),
+    ("6S=F", "فرانک سوئیس فیوچر"),
+    ("6N=F", "دلار نیوزیلند فیوچر"),
+    ("DX-Y.NYB", "شاخص دلار آمریکا (DXY)"),
+    ("ES=F", "اس اند پی ۵۰۰ فیوچر"),
+    ("NQ=F", "نزدک ۱۰۰ فیوچر"),
+    ("YM=F", "داوجونز فیوچر"),
+    ("BTC=F", "بیت‌کوین فیوچر (CME)"),
+]
+try:
+    futures = []
+    for sym, fa_name in FUTURES_ROWS:
+        try:
+            req = urllib.request.Request(
+                f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?interval=1d&range=5d",
+                headers=UA,
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                meta = json.loads(resp.read().decode("utf-8"))["chart"]["result"][0]["meta"]
+            price = float(meta.get("regularMarketPrice") or 0)
+            prev = float(meta.get("chartPreviousClose") or 0)
+            if not price > 0:
+                raise ValueError(f"no price for {sym}")
+            change = round((price - prev) / prev * 100, 2) if prev > 0 else None
+            futures.append({"s": sym, "n": fa_name, "p": round(price, 6), "c": change})
+        except Exception as error:
+            print(f"futures {sym} FAILED:", error)
+    if len(futures) >= 5:
+        out["futures"] = futures
+        out["futuresUpdatedAt"] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        ok = True
+        print("futures OK:", len(futures), "contracts — e.g.", futures[0]["n"], futures[0]["p"])
+    else:
+        print("futures SKIPPED: too few contracts", len(futures))
+except Exception as error:
+    print("futures FAILED:", error)
+
 # 3) Weekly economic calendar (ForexFactory this-week JSON, filtered like the app).
 try:
     events = fetch("https://nfs.faireconomy.media/ff_calendar_thisweek.json")
@@ -240,7 +293,7 @@ if not out["quotes"]:
     sys.exit(1)
 
 out["updatedAt"] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-out["sources"] = {"quotes": quotes_source, "rates": "open.er-api.com", "events": "nfs.faireconomy.media", "fiats": "lake.arzdigital.com", "coins": "lake.arzdigital.com", "news": "forexlive.com · investing.com · cnbc.com"}
+out["sources"] = {"quotes": quotes_source, "rates": "open.er-api.com", "events": "nfs.faireconomy.media", "fiats": "lake.arzdigital.com", "coins": "lake.arzdigital.com", "news": "forexlive.com · investing.com · cnbc.com", "futures": "finance.yahoo.com"}
 os.makedirs(os.path.dirname(DATA), exist_ok=True)
 with open(DATA, "w", encoding="utf-8") as f:
     json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
