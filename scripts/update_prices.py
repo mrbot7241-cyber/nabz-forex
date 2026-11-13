@@ -131,13 +131,14 @@ try:
 except Exception as error:
     print("fiats FAILED:", error)
 
-# 2c) Top cryptocurrencies to toman (arzdigital coins API, rank order,
-# BTC first). Rendered by the app's crypto section straight from the
-# snapshot, so future coin-list changes are data-only and go live
-# without an app update.
-COIN_ROWS = 10
+# 2c) ALL cryptocurrencies to toman (arzdigital coins API, rank order,
+# BTC first — the public endpoint serves exactly 1000 coins; limit>1000
+# is rejected with HTTP 400). Rendered by the app's crypto section straight
+# from the snapshot, so future coin-list changes are data-only and go
+# live without an app update.
+COIN_ROWS = 1000
 try:
-    raw = fetch("https://lake.arzdigital.com/web/api/v1/pub/coins?limit=12").get("data") or []
+    raw = fetch("https://lake.arzdigital.com/web/api/v1/pub/coins?limit=1000").get("data") or []
     coins = []
     for item in raw:
         try:
@@ -162,11 +163,12 @@ try:
         except Exception:
             continue
     coins.sort(key=lambda row: row.get("r") or 999999)
+    coins = coins[:COIN_ROWS]
     if coins:
-        out["coins"] = coins[:COIN_ROWS]
+        out["coins"] = coins
         out["coinsUpdatedAt"] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
         ok = True
-        print("coins OK:", ", ".join(f"{c['s']}@{c['r']}" for c in coins[:COIN_ROWS]))
+        print("coins OK:", len(coins), "coins — first:", ", ".join(f"{c['s']}@{c['r']}" for c in coins[:5]))
     else:
         print("coins SKIPPED: no usable rows")
 except Exception as error:
