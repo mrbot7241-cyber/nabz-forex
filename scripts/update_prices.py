@@ -12,6 +12,7 @@ import json
 import os
 import re
 import sys
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree
 from html import unescape
@@ -178,15 +179,42 @@ except Exception as error:
     print("coins FAILED:", error)
 
 # 2d) Trading news headlines (RSS: ForexLive, Investing.com forex, CNBC forex).
-# Rows are compact: t=title, l=link, s=source, d=published (epoch seconds).
+# Rows are compact: t=title, l=link, s=source, d=published (epoch seconds),
+# fa=Persian translation of the title (best effort, falls back to English).
 # The app renders this list straight from the snapshot, so the section stays
-# live without app updates.
+# live without app updates. Titles are translated to Persian with the free
+# Google translate endpoint; a translation cache inside the previous snapshot
+# keeps each run to translating only the newest headlines.
 NEWS_ROWS = 30
 NEWS_FEEDS = [
     ("ForexLive", "https://www.forexlive.com/feed/news"),
     ("Investing.com", "https://www.investing.com/rss/news_1.rss"),
     ("CNBC", "https://www.cnbc.com/id/20910258/device/rss/rss.html"),
 ]
+
+
+def translate_fa(text, cache):
+    if not text:
+        return None
+    if text in cache:
+        return cache[text]
+    try:
+        url = (
+            "https://translate.googleapis.com/translate_a/single?client=gtx"
+            "&sl=en&tl=fa&dt=t&q=" + urllib.parse.quote(text)
+        )
+        req = urllib.request.Request(url, headers=UA)
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        translated = "".join(part[0] for part in payload[0] if part and part[0]).strip()
+        if translated and len(translated) > 2:
+            cache[text] = translated
+            return translated
+    except Exception as error:
+        print("translate FAILED:", error)
+    return None
+
+
 try:
     seen, items = set(), []
     for source, feed_url in NEWS_FEEDS:
@@ -216,10 +244,19 @@ try:
             print(f"news feed {source} FAILED:", error)
     items.sort(key=lambda i: i["d"], reverse=True)
     if items:
+        # Persian titles: reuse translations stored in the previous snapshot,
+        # translate only new titles (kept even when a headline rotates out so
+        # reappearing stories do not cost a new request).
+        fa_cache = {row["t"]: row.get("fa") for row in (out.get("news") or []) if isinstance(row, dict) and row.get("fa")}
+        for item in items[:NEWS_ROWS]:
+            fa = translate_fa(item["t"], fa_cache)
+            if fa:
+                item["fa"] = fa
         out["news"] = items[:NEWS_ROWS]
         out["newsUpdatedAt"] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
         ok = True
-        print("news OK:", len(items), "headlines — latest:", items[0]["s"], "|", items[0]["t"][:60])
+        translated = sum(1 for i in items[:NEWS_ROWS] if "fa" in i)
+        print("news OK:", len(items), "headlines,", translated, "translated — latest:", items[0]["t"][:60])
     else:
         print("news SKIPPED: no usable headlines")
 except Exception as error:
